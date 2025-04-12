@@ -1,461 +1,312 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
-import time
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from flask_cors import CORS
 import threading
-import random
-import string
-import hashlib
+import time
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import random
+import string
 import os
-from functools import wraps
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+CORS(app)
 
-# API İçin Basit Şifreleme Anahtarı
-API_ANAHTAR = "akilliev2023"
-
-# Kullanıcı bilgileri
-KULLANICI_ADI = "herdem"
-SIFRE = "1940"
-
-# Mail ayarları
-GONDEREN_EMAIL = "herdemerasmus@gmail.com"
-ALICI_EMAIL = "hidayete369@gmail.com"
-EMAIL_SIFRE = "kmop hzuo yoqp ztnr"
-
-# Tek seferlik şifre
-TEK_SEFERLIK_SIFRE = ""
-
-# Veri Modelleri
-gelen_veriler = {
-    "kapi_gelen": False,
-    "isitici_gelen": False,
-    "vantilator_gelen": False,
-    "pencere_gelen": False,
-    "ampul_gelen": False,
-    "perde_gelen": False,
-    "isik_gelen": 0,
-    "sicaklik_gelen": 25,
-    "isik_oto_gelen": False,
-    "sicaklik_oto_gelen": False,
-    "birinci_esik_gelen": 18,
-    "ikinci_esik_gelen": 22,
-    "ucuncu_esik_gelen": 26
-}
-
-olan_veriler = {
-    "kapi": False,
-    "isitici": False,
+# Başlangıç değerleri
+cikis_data = {
     "vantilator": False,
     "pencere": False,
-    "ampul": False,
+    "kapi": False,
     "perde": False,
-    "isik": 0,
-    "sicaklik": 25,
-    "isik_oto": False,
-    "sicaklik_oto": False,
-    "birinci_esik": 18,
-    "ikinci_esik": 22,
-    "ucuncu_esik": 26
+    "ampul": False
 }
 
-giden_veriler = {
-    "kapi_giden": False,
-    "ampul_giden": False,
-    "perde_giden": False,
-    "isitici_giden": False,
-    "vantilator_giden": False,
-    "pencere_giden": False
+oto_data = {
+    "sicaklik_oto": True,
+    "isik_oto": True
 }
 
-# Kilitler
-veri_kilidi = threading.Lock()
+sicaklik_data = {
+    "sicaklik_ilk_esik": 18,
+    "sicaklik_ikinci_esik": 22,
+    "sicaklik_ucuncu_esik": 26
+}
 
-# Login zorunluluğu decorator'ı
-def login_gerekli(f):
-    @wraps(f)
-    def dekorasyonlu_fonksiyon(*args, **kwargs):
-        if 'giris_yapildi' not in session or not session['giris_yapildi']:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return dekorasyonlu_fonksiyon
+alinan_data = {
+    "vantilator_alinan": False,
+    "pencere_alinan": False,
+    "kapi_alinan": False,
+    "perde_alinan": False,
+    "ampul_alinan": False,
+    "sicaklik": 22,
+    "isik_ev": False
+}
 
-# API anahtarı kontrolü decorator'ı
-def api_anahtar_gerekli(f):
-    @wraps(f)
-    def dekorasyonlu_fonksiyon(*args, **kwargs):
-        if request.method == "POST":
-            gelen_anahtar = request.headers.get('X-API-Key')
-            if not gelen_anahtar or not anahtar_dogrula(gelen_anahtar):
-                return jsonify({"hata": "Geçersiz API anahtarı"}), 401
-        return f(*args, **kwargs)
-    return dekorasyonlu_fonksiyon
+# Kapı zamanlayıcısı için değişken
+kapi_timer = None
+kapi_remaining = 0
 
-def anahtar_dogrula(anahtar):
-    beklenen_hash = hashlib.sha256(API_ANAHTAR.encode()).hexdigest()
-    return hashlib.sha256(anahtar.encode()).hexdigest() == beklenen_hash
+# Giriş yapmış kullanıcılar için doğrulama kodları
+verification_codes = {}
 
-def tek_seferlik_sifre_olustur():
-    global TEK_SEFERLIK_SIFRE
-    karakterler = string.digits
-    TEK_SEFERLIK_SIFRE = ''.join(random.choice(karakterler) for _ in range(8))
-    return TEK_SEFERLIK_SIFRE
-
-def mail_gonder(konu, icerik):
-    try:
-        mesaj = MIMEMultipart()
-        mesaj["From"] = GONDEREN_EMAIL
-        mesaj["To"] = ALICI_EMAIL
-        mesaj["Subject"] = konu
-        
-        mesaj.attach(MIMEText(icerik, "plain"))
-        
-        with smtplib.SMTP("smtp.gmail.com", 587) as sunucu:
-            sunucu.starttls()
-            sunucu.login(GONDEREN_EMAIL, EMAIL_SIFRE)
-            sunucu.send_message(mesaj)
-        
-        return True
-    except Exception as e:
-        print(f"Mail gönderme hatası: {e}")
-        return False
-
-def kapi_otomatik_kapat():
-    time.sleep(10)  # 10 saniye bekle
-    with veri_kilidi:
-        olan_veriler["kapi"] = False
-        giden_veriler["kapi_giden"] = False
-
-def otomatik_kontrol():
-    while True:
-        time.sleep(1)  # Her saniye kontrol et
-        with veri_kilidi:
-            # Sıcaklık otomatik kontrolü
-            if olan_veriler["sicaklik_oto"]:
-                sicaklik = olan_veriler["sicaklik"]
-                birinci_esik = olan_veriler["birinci_esik"]
-                ikinci_esik = olan_veriler["ikinci_esik"]
-                ucuncu_esik = olan_veriler["ucuncu_esik"]
-                
-                if sicaklik < birinci_esik:
-                    olan_veriler["pencere"] = False
-                    olan_veriler["isitici"] = True
-                    olan_veriler["vantilator"] = False
-                    
-                    giden_veriler["pencere_giden"] = False
-                    giden_veriler["isitici_giden"] = True
-                    giden_veriler["vantilator_giden"] = False
-                    
-                elif sicaklik >= birinci_esik and sicaklik < ikinci_esik:
-                    olan_veriler["pencere"] = False
-                    olan_veriler["isitici"] = False
-                    olan_veriler["vantilator"] = False
-                    
-                    giden_veriler["pencere_giden"] = False
-                    giden_veriler["isitici_giden"] = False
-                    giden_veriler["vantilator_giden"] = False
-                    
-                elif sicaklik >= ikinci_esik and sicaklik < ucuncu_esik:
-                    olan_veriler["pencere"] = True
-                    olan_veriler["isitici"] = False
-                    olan_veriler["vantilator"] = False
-                    
-                    giden_veriler["pencere_giden"] = True
-                    giden_veriler["isitici_giden"] = False
-                    giden_veriler["vantilator_giden"] = False
-                    
-                elif sicaklik >= ucuncu_esik:
-                    olan_veriler["pencere"] = True
-                    olan_veriler["isitici"] = False
-                    olan_veriler["vantilator"] = True
-                    
-                    giden_veriler["pencere_giden"] = True
-                    giden_veriler["isitici_giden"] = False
-                    giden_veriler["vantilator_giden"] = True
-            
-            # Işık otomatik kontrolü
-            if olan_veriler["isik_oto"]:
-                isik = olan_veriler["isik"]
-                
-                if isik == 1:
-                    olan_veriler["ampul"] = True
-                    olan_veriler["perde"] = True
-                    
-                    giden_veriler["ampul_giden"] = True
-                    giden_veriler["perde_giden"] = True
-                    
-                else:  # isik == 0
-                    olan_veriler["ampul"] = False
-                    olan_veriler["perde"] = False
-                    
-                    giden_veriler["ampul_giden"] = False
-                    giden_veriler["perde_giden"] = False
-
-# API rotaları
-@app.route('/api/gelen', methods=['GET', 'POST'])
-@api_anahtar_gerekli
-def gelen_api():
-    global gelen_veriler, olan_veriler, giden_veriler
-    
-    if request.method == 'GET':
-        return jsonify(gelen_veriler)
-    
-    elif request.method == 'POST':
-        yeni_veriler = request.json
-        
-        with veri_kilidi:
-            for anahtar, deger in yeni_veriler.items():
-                if anahtar in gelen_veriler:
-                    gelen_veriler[anahtar] = deger
-                    
-                    # Kapı durumu kontrolü
-                    if anahtar == "kapi_gelen" and deger:
-                        olan_veriler["kapi"] = True
-                        giden_veriler["kapi_giden"] = True
-                        # 10 saniye sonra kapıyı kapat
-                        threading.Thread(target=kapi_otomatik_kapat).start()
-                    
-                    # Isıtıcı durumu kontrolü
-                    elif anahtar == "isitici_gelen":
-                        if olan_veriler["sicaklik_oto"]:
-                            # Otomatik modda değişiklik yapma, mevcut değer korunsun
-                            gelen_veriler["isitici_gelen"] = olan_veriler["isitici"]
-                        else:
-                            # Manuel mod
-                            olan_veriler["isitici"] = deger
-                            giden_veriler["isitici_giden"] = deger
-                    
-                    # Vantilatör durumu kontrolü
-                    elif anahtar == "vantilator_gelen":
-                        if olan_veriler["sicaklik_oto"]:
-                            # Otomatik modda değişiklik yapma
-                            gelen_veriler["vantilator_gelen"] = olan_veriler["vantilator"]
-                        else:
-                            # Manuel mod
-                            olan_veriler["vantilator"] = deger
-                            giden_veriler["vantilator_giden"] = deger
-                    
-                    # Pencere durumu kontrolü
-                    elif anahtar == "pencere_gelen":
-                        if olan_veriler["sicaklik_oto"]:
-                            # Otomatik modda değişiklik yapma
-                            gelen_veriler["pencere_gelen"] = olan_veriler["pencere"]
-                        else:
-                            # Manuel mod
-                            olan_veriler["pencere"] = deger
-                            giden_veriler["pencere_giden"] = deger
-                    
-                    # Ampul durumu kontrolü
-                    elif anahtar == "ampul_gelen":
-                        if olan_veriler["isik_oto"]:
-                            # Otomatik modda değişiklik yapma
-                            gelen_veriler["ampul_gelen"] = olan_veriler["ampul"]
-                        else:
-                            # Manuel mod
-                            olan_veriler["ampul"] = deger
-                            giden_veriler["ampul_giden"] = deger
-                    
-                    # Perde durumu kontrolü
-                    elif anahtar == "perde_gelen":
-                        if olan_veriler["isik_oto"]:
-                            # Otomatik modda değişiklik yapma
-                            gelen_veriler["perde_gelen"] = olan_veriler["perde"]
-                        else:
-                            # Manuel mod
-                            olan_veriler["perde"] = deger
-                            giden_veriler["perde_giden"] = deger
-                    
-                    # Diğer parametreler
-                    elif anahtar == "sicaklik_gelen":
-                        olan_veriler["sicaklik"] = deger
-                    elif anahtar == "isik_gelen":
-                        olan_veriler["isik"] = deger
-                    elif anahtar == "isik_oto_gelen":
-                        olan_veriler["isik_oto"] = deger
-                    elif anahtar == "sicaklik_oto_gelen":
-                        olan_veriler["sicaklik_oto"] = deger
-                    elif anahtar == "birinci_esik_gelen":
-                        olan_veriler["birinci_esik"] = deger
-                    elif anahtar == "ikinci_esik_gelen":
-                        olan_veriler["ikinci_esik"] = deger
-                    elif anahtar == "ucuncu_esik_gelen":
-                        olan_veriler["ucuncu_esik"] = deger
-        
-        return jsonify({"durum": "başarılı", "mesaj": "Veriler güncellendi"})
-
-@app.route('/api/olan', methods=['GET'])
-@api_anahtar_gerekli
-def olan_api():
-    return jsonify(olan_veriler)
-
-@app.route('/api/giden', methods=['GET'])
-@api_anahtar_gerekli
-def giden_api():
-    return jsonify(giden_veriler)
-
-# Web arayüzü rotaları
-@app.route('/')
-def ana_sayfa():
-    if 'giris_yapildi' in session and session['giris_yapildi']:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    hata = None
-    tek_seferlik_sifre_mesaji = None
-    
+# API Endpoint'leri
+@app.route('/api/cikis', methods=['GET', 'POST'])
+def cikis():
+    global cikis_data
     if request.method == 'POST':
-        kullanici_adi = request.form.get('kullanici_adi')
-        sifre = request.form.get('sifre')
-        
-        if kullanici_adi == KULLANICI_ADI and sifre == SIFRE:
-            # Kullanıcı bilgileri doğru, tek seferlik şifre oluştur
-            tek_seferlik = tek_seferlik_sifre_olustur()
-            
-            # Mail gönder
-            konu = "Giriş Bildirimi ve Tek Seferlik Şifre"
-            icerik = f"Hesabınıza bir giriş talebi alındı.\nTek seferlik şifreniz: {tek_seferlik}"
-            
-            if mail_gonder(konu, icerik):
-                tek_seferlik_sifre_mesaji = "Tek seferlik şifreniz e-posta adresinize gönderildi."
-                session['kullanici_dogrulandi'] = True
-            else:
-                hata = "E-posta gönderilemedi, lütfen tekrar deneyin."
-        else:
-            hata = "Kullanıcı adı veya şifre hatalı!"
-    
-    return render_template('login.html', hata=hata, tek_seferlik_sifre_mesaji=tek_seferlik_sifre_mesaji)
+        data = request.get_json()
+        if data:
+            for key in data:
+                if key in cikis_data:
+                    cikis_data[key] = bool(data[key])
+        return jsonify({"status": "success", "data": cikis_data})
+    return jsonify(cikis_data)
 
-@app.route('/dogrula', methods=['POST'])
-def dogrula():
-    if 'kullanici_dogrulandi' not in session or not session['kullanici_dogrulandi']:
-        return redirect(url_for('login'))
+@app.route('/api/oto', methods=['GET', 'POST'])
+def oto():
+    global oto_data
+    if request.method == 'POST':
+        data = request.get_json()
+        if data:
+            for key in data:
+                if key in oto_data:
+                    oto_data[key] = bool(data[key])
+        return jsonify({"status": "success", "data": oto_data})
+    return jsonify(oto_data)
+
+@app.route('/api/sicaklik', methods=['GET', 'POST'])
+def sicaklik():
+    global sicaklik_data
+    if request.method == 'POST':
+        data = request.get_json()
+        if data:
+            for key in data:
+                if key in sicaklik_data:
+                    try:
+                        sicaklik_data[key] = int(data[key])
+                    except:
+                        pass
+        return jsonify({"status": "success", "data": sicaklik_data})
+    return jsonify(sicaklik_data)
+
+@app.route('/api/alinan', methods=['GET', 'POST'])
+def alinan():
+    global alinan_data
+    if request.method == 'POST':
+        data = request.get_json()
+        if data:
+            for key in data:
+                if key in alinan_data:
+                    if key == "sicaklik":
+                        try:
+                            alinan_data[key] = int(data[key])
+                        except:
+                            pass
+                    else:
+                        alinan_data[key] = bool(data[key])
+        return jsonify({"status": "success", "data": alinan_data})
+    return jsonify(alinan_data)
+
+# Web sayfaları
+@app.route('/')
+def index():
+    if 'logged_in' in session and session['logged_in']:
+        return redirect(url_for('dashboard'))
+    return render_template('login.html')
+
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.form.get('username')
+    password = request.form.get('password')
     
-    girilen_kod = request.form.get('tek_seferlik_sifre')
+    if username == 'herdem' and password == '1940':
+        # Doğrulama kodu oluştur ve e-posta gönder
+        verification_code = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        verification_codes[username] = verification_code
+        
+        # E-posta gönderme
+        send_verification_email("hidayete369@gmail.com", verification_code)
+        
+        return render_template('verification.html', username=username)
+    else:
+        return render_template('login.html', error="Kullanıcı adı veya şifre hatalı!")
+
+@app.route('/verify', methods=['POST'])
+def verify():
+    username = request.form.get('username')
+    code = request.form.get('code')
     
-    if girilen_kod == TEK_SEFERLIK_SIFRE:
-        session['giris_yapildi'] = True
+    if username in verification_codes and verification_codes[username] == code:
+        session['logged_in'] = True
         return redirect(url_for('dashboard'))
     else:
-        return render_template('login.html', 
-                              kod_hatasi="Tek seferlik şifre hatalı, lütfen tekrar deneyin.",
-                              tek_seferlik_sifre_mesaji="Tek seferlik şifrenizi girin.")
-
-@app.route('/cikis')
-def cikis():
-    session.clear()
-    return redirect(url_for('login'))
+        return render_template('verification.html', username=username, error="Doğrulama kodu hatalı!")
 
 @app.route('/dashboard')
-@login_gerekli
 def dashboard():
-    return render_template('dashboard.html', olan=olan_veriler, gelen=gelen_veriler, giden=giden_veriler)
+    if 'logged_in' not in session or not session['logged_in']:
+        return redirect(url_for('index'))
+    
+    global cikis_data, oto_data, sicaklik_data, alinan_data, kapi_remaining
+    
+    data = {
+        "cikis": cikis_data,
+        "oto": oto_data,
+        "sicaklik": sicaklik_data,
+        "alinan": alinan_data,
+        "kapi_remaining": kapi_remaining
+    }
+    
+    return render_template('dashboard.html', data=data)
 
-@app.route('/gelen_guncelle', methods=['POST'])
-@login_gerekli
-def gelen_guncelle():
-    yeni_veriler = {}
+@app.route('/update_settings', methods=['POST'])
+def update_settings():
+    if 'logged_in' not in session or not session['logged_in']:
+        return jsonify({"status": "error", "message": "Lütfen önce giriş yapın"})
     
-    for anahtar in gelen_veriler.keys():
-        if anahtar != "isik_gelen":  # isik_gelen hariç
-            if anahtar.endswith('_gelen') and anahtar.replace('_gelen', '') in ['kapi', 'isitici', 'vantilator', 'pencere', 'ampul', 'perde', 'isik_oto', 'sicaklik_oto']:
-                # Boolean değerler
-                deger = anahtar in request.form
-                yeni_veriler[anahtar] = deger
-            elif anahtar in request.form:
-                # Sayısal değerler
-                try:
-                    deger = int(request.form[anahtar])
-                    yeni_veriler[anahtar] = deger
-                except ValueError:
-                    pass
+    data = request.form
     
-    # API'ye gönder
-    with veri_kilidi:
-        for anahtar, deger in yeni_veriler.items():
-            if anahtar in gelen_veriler:
-                gelen_veriler[anahtar] = deger
-                
-                # Kapı durumu kontrolü
-                if anahtar == "kapi_gelen" and deger:
-                    olan_veriler["kapi"] = True
-                    giden_veriler["kapi_giden"] = True
-                    # 10 saniye sonra kapıyı kapat
-                    threading.Thread(target=kapi_otomatik_kapat).start()
-                
-                # Isıtıcı durumu kontrolü
-                elif anahtar == "isitici_gelen":
-                    if olan_veriler["sicaklik_oto"]:
-                        # Otomatik modda değişiklik yapma
-                        gelen_veriler["isitici_gelen"] = olan_veriler["isitici"]
-                    else:
-                        # Manuel mod
-                        olan_veriler["isitici"] = deger
-                        giden_veriler["isitici_giden"] = deger
-                
-                # Vantilatör durumu kontrolü
-                elif anahtar == "vantilator_gelen":
-                    if olan_veriler["sicaklik_oto"]:
-                        # Otomatik modda değişiklik yapma
-                        gelen_veriler["vantilator_gelen"] = olan_veriler["vantilator"]
-                    else:
-                        # Manuel mod
-                        olan_veriler["vantilator"] = deger
-                        giden_veriler["vantilator_giden"] = deger
-                
-                # Pencere durumu kontrolü
-                elif anahtar == "pencere_gelen":
-                    if olan_veriler["sicaklik_oto"]:
-                        # Otomatik modda değişiklik yapma
-                        gelen_veriler["pencere_gelen"] = olan_veriler["pencere"]
-                    else:
-                        # Manuel mod
-                        olan_veriler["pencere"] = deger
-                        giden_veriler["pencere_giden"] = deger
-                
-                # Ampul durumu kontrolü
-                elif anahtar == "ampul_gelen":
-                    if olan_veriler["isik_oto"]:
-                        # Otomatik modda değişiklik yapma
-                        gelen_veriler["ampul_gelen"] = olan_veriler["ampul"]
-                    else:
-                        # Manuel mod
-                        olan_veriler["ampul"] = deger
-                        giden_veriler["ampul_giden"] = deger
-                
-                # Perde durumu kontrolü
-                elif anahtar == "perde_gelen":
-                    if olan_veriler["isik_oto"]:
-                        # Otomatik modda değişiklik yapma
-                        gelen_veriler["perde_gelen"] = olan_veriler["perde"]
-                    else:
-                        # Manuel mod
-                        olan_veriler["perde"] = deger
-                        giden_veriler["perde_giden"] = deger
-                
-                # Diğer parametreler
-                elif anahtar == "sicaklik_gelen":
-                    olan_veriler["sicaklik"] = deger
-                elif anahtar == "isik_oto_gelen":
-                    olan_veriler["isik_oto"] = deger
-                elif anahtar == "sicaklik_oto_gelen":
-                    olan_veriler["sicaklik_oto"] = deger
-                elif anahtar == "birinci_esik_gelen":
-                    olan_veriler["birinci_esik"] = deger
-                elif anahtar == "ikinci_esik_gelen":
-                    olan_veriler["ikinci_esik"] = deger
-                elif anahtar == "ucuncu_esik_gelen":
-                    olan_veriler["ucuncu_esik"] = deger
+    # cikis verilerini güncelle
+    if 'vantilator' in data and not oto_data['sicaklik_oto']:
+        cikis_data['vantilator'] = data['vantilator'] == 'true'
     
-    return redirect(url_for('dashboard'))
+    if 'pencere' in data and not oto_data['sicaklik_oto']:
+        cikis_data['pencere'] = data['pencere'] == 'true'
+    
+    if 'kapi' in data:
+        alinan_data['kapi_alinan'] = data['kapi'] == 'true'
+    
+    if 'perde' in data and not oto_data['isik_oto']:
+        cikis_data['perde'] = data['perde'] == 'true'
+    
+    if 'ampul' in data and not oto_data['isik_oto']:
+        cikis_data['ampul'] = data['ampul'] == 'true'
+    
+    # oto verilerini güncelle
+    if 'sicaklik_oto' in data:
+        oto_data['sicaklik_oto'] = data['sicaklik_oto'] == 'true'
+    
+    if 'isik_oto' in data:
+        oto_data['isik_oto'] = data['isik_oto'] == 'true'
+    
+    # sicaklik verilerini güncelle
+    if 'sicaklik_ilk_esik' in data:
+        try:
+            sicaklik_data['sicaklik_ilk_esik'] = int(data['sicaklik_ilk_esik'])
+        except:
+            pass
+    
+    if 'sicaklik_ikinci_esik' in data:
+        try:
+            sicaklik_data['sicaklik_ikinci_esik'] = int(data['sicaklik_ikinci_esik'])
+        except:
+            pass
+    
+    if 'sicaklik_ucuncu_esik' in data:
+        try:
+            sicaklik_data['sicaklik_ucuncu_esik'] = int(data['sicaklik_ucuncu_esik'])
+        except:
+            pass
+    
+    return jsonify({"status": "success"})
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('index'))
+
+# E-posta gönderme fonksiyonu
+def send_verification_email(to_email, code):
+    from_email = "herdemerasmus@gmail.com"
+    password = "kmop hzuo yoqp ztnr"
+    
+    msg = MIMEMultipart()
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg['Subject'] = "Ev Otomasyon Sistemi Doğrulama Kodu"
+    
+    body = f"Doğrulama kodunuz: {code}"
+    msg.attach(MIMEText(body, 'plain'))
+    
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(from_email, password)
+        text = msg.as_string()
+        server.sendmail(from_email, to_email, text)
+        server.quit()
+    except Exception as e:
+        print(f"E-posta gönderirken hata oluştu: {e}")
+
+# Otomatik kontrol fonksiyonu
+def auto_control():
+    global cikis_data, oto_data, sicaklik_data, alinan_data, kapi_timer, kapi_remaining
+    
+    while True:
+        # Kapı kontrolü
+        if alinan_data["kapi_alinan"]:
+            alinan_data["kapi_alinan"] = False
+            cikis_data["kapi"] = True
+            kapi_remaining = 10
+            
+            if kapi_timer:
+                kapi_timer.cancel()
+            
+            def kapi_kapat():
+                global cikis_data, kapi_remaining
+                cikis_data["kapi"] = False
+                kapi_remaining = 0
+            
+            kapi_timer = threading.Timer(10, kapi_kapat)
+            kapi_timer.start()
+            
+            # Zamanlayıcı sayacı için
+            for i in range(10):
+                time.sleep(1)
+                if kapi_remaining > 0:
+                    kapi_remaining -= 1
+        
+        # Sıcaklık otomatik kontrolü
+        if oto_data["sicaklik_oto"]:
+            current_temp = alinan_data["sicaklik"]
+            
+            if current_temp < sicaklik_data["sicaklik_ilk_esik"]:
+                cikis_data["vantilator"] = False
+                cikis_data["pencere"] = False
+            elif sicaklik_data["sicaklik_ilk_esik"] <= current_temp < sicaklik_data["sicaklik_ikinci_esik"]:
+                cikis_data["vantilator"] = False
+                cikis_data["pencere"] = False
+            elif sicaklik_data["sicaklik_ikinci_esik"] <= current_temp < sicaklik_data["sicaklik_ucuncu_esik"]:
+                cikis_data["vantilator"] = False
+                cikis_data["pencere"] = True
+            else:
+                cikis_data["vantilator"] = True
+                cikis_data["pencere"] = True
+        else:
+            # Manuel mod
+            cikis_data["vantilator"] = alinan_data["vantilator_alinan"]
+            cikis_data["pencere"] = alinan_data["pencere_alinan"]
+        
+        # Işık otomatik kontrolü
+        if oto_data["isik_oto"]:
+            if alinan_data["isik_ev"]:
+                cikis_data["perde"] = True
+                cikis_data["ampul"] = True
+            else:
+                cikis_data["perde"] = False
+                cikis_data["ampul"] = False
+        else:
+            # Manuel mod
+            cikis_data["perde"] = alinan_data["perde_alinan"]
+            cikis_data["ampul"] = alinan_data["ampul_alinan"]
+        
+        time.sleep(1)
 
 if __name__ == '__main__':
-    # Otomatik kontrol thread'ini başlat
-    kontrol_thread = threading.Thread(target=otomatik_kontrol, daemon=True)
-    kontrol_thread.start()
+    # Otomatik kontrol için ayrı bir thread başlat
+    control_thread = threading.Thread(target=auto_control, daemon=True)
+    control_thread.start()
     
     # Flask uygulamasını başlat
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
