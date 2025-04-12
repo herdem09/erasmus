@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Akıllı Ev Sistemi - Giriş</title>
+    <title>Ev Otomasyon Sistemi - Giriş</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
             margin: 0;
             padding: 0;
             display: flex;
@@ -15,102 +15,81 @@
             align-items: center;
             height: 100vh;
         }
-        
         .login-container {
             background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
             padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
             width: 350px;
+            transition: transform 0.3s ease;
         }
-        
+        .login-container:hover {
+            transform: translateY(-5px);
+        }
         h1 {
             text-align: center;
             color: #333;
             margin-bottom: 30px;
         }
-        
         .form-group {
             margin-bottom: 20px;
         }
-        
         label {
             display: block;
             margin-bottom: 5px;
             color: #555;
-            font-weight: bold;
         }
-        
-        input[type="text"],
-        input[type="password"] {
+        input[type="text"], input[type="password"] {
             width: 100%;
             padding: 10px;
             border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
         }
-        
+        input[type="text"]:focus, input[type="password"]:focus {
+            border-color: #4CAF50;
+            outline: none;
+        }
         button {
             background-color: #4CAF50;
             color: white;
             border: none;
-            padding: 12px 20px;
+            padding: 12px;
             width: 100%;
-            border-radius: 4px;
-            cursor: pointer;
+            border-radius: 5px;
             font-size: 16px;
-            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s;
         }
-        
         button:hover {
             background-color: #45a049;
         }
-        
         .error-message {
             color: #f44336;
-            margin-top: 15px;
-            text-align: center;
-        }
-        
-        .success-message {
-            color: #4CAF50;
-            margin-top: 15px;
+            font-size: 14px;
+            margin-top: 20px;
             text-align: center;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <h1>Akıllı Ev Sistemi</h1>
-        
-        {% if tek_seferlik_sifre_mesaji and not kod_hatasi %}
-        <form action="{{ url_for('dogrula') }}" method="post">
+        <h1>Ev Otomasyon Sistemi</h1>
+        <form action="/login" method="post">
             <div class="form-group">
-                <label for="tek_seferlik_sifre">Tek Seferlik Şifre:</label>
-                <input type="text" id="tek_seferlik_sifre" name="tek_seferlik_sifre" required>
-            </div>
-            <button type="submit">Doğrula</button>
-            {% if kod_hatasi %}
-            <div class="error-message">{{ kod_hatasi }}</div>
-            {% endif %}
-            <div class="success-message">{{ tek_seferlik_sifre_mesaji }}</div>
-        </form>
-        {% else %}
-        <form action="{{ url_for('login') }}" method="post">
-            <div class="form-group">
-                <label for="kullanici_adi">Kullanıcı Adı:</label>
-                <input type="text" id="kullanici_adi" name="kullanici_adi" required>
+                <label for="username">Kullanıcı Adı</label>
+                <input type="text" id="username" name="username" required>
             </div>
             <div class="form-group">
-                <label for="sifre">Şifre:</label>
-                <input type="password" id="sifre" name="sifre" required>
+                <label for="password">Şifre</label>
+                <input type="password" id="password" name="password" required>
             </div>
             <button type="submit">Giriş Yap</button>
-            {% if hata %}
-            <div class="error-message">{{ hata }}</div>
+            {% if error %}
+            <div class="error-message">{{ error }}</div>
             {% endif %}
         </form>
-        {% endif %}
     </div>
 </body>
 </html>
